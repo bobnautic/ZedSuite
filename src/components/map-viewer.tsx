@@ -715,7 +715,10 @@ const lastAutoSizeRef = useRef<{ w: number; h: number }>({ w: 0, h: 0 });
 const skipAutoSizeRef = useRef<boolean>(false);
 
   // Derived display swap for Boost target: show RPM on Y (left) and IQ on X (top)
-  const mapNameLowerDisplay = (mapData.name || "").toLowerCase();
+  // Les règles qui suivent reconnaissent des maps au nom que le détecteur
+  // leur donne. Une map importée (.ols, .xdf, .json) n'en reçoit aucune :
+  // son fichier de définitions dit tout, l'app ne corrige rien par-dessus.
+  const mapNameLowerDisplay = mapData.external_source ? "" : (mapData.name || "").toLowerCase();
   const isBoostTargetDisplay = useMemo(
     () => mapNameLowerDisplay.includes("boost target map"),
     [mapNameLowerDisplay]
@@ -736,7 +739,8 @@ const skipAutoSizeRef = useRef<boolean>(false);
     return matrix[0].map((_, colIndex) => matrix.map(row => row[colIndex]));
   };
 
-  const isSelectorInjector = (mapData.name || "").toLowerCase().includes("selector for injector duration");
+  // Maps importées (OLS/XDF/JSON) : aucune règle d'affichage par le nom
+  const isSelectorInjector = !mapData.external_source && (mapData.name || "").toLowerCase().includes("selector for injector duration");
 
   // Base display data (before ordering adjustments)
   // Boost target: no display transpose here; axes handled at read-time
@@ -805,8 +809,8 @@ const skipAutoSizeRef = useRef<boolean>(false);
 
   // Y ordering:
   const isEgrMapDisplay =
-    ((mapData.name || "").toLowerCase().includes("egr")) &&
-    !(mapData.name || "").toLowerCase().includes("temperature");
+    mapNameLowerDisplay.includes("egr") &&
+    !mapNameLowerDisplay.includes("temperature");
   // - selector ascending
   // - injector duration maps: ascending (small -> grand vers le bas, comme WinOLS)
   // - others: descending
@@ -2050,7 +2054,7 @@ const [axesSwapped, setAxesSwapped] = useState<boolean>(false); // Track if axes
     // y_label du détecteur, sinon la description « X: … (unité) | Y: … »
     const { xUnit, yUnit, xLabel, yLabel } = resolveAxisLabels(mapData);
 
-    const mapNameLower = (mapData.name || "").toLowerCase();
+    const mapNameLower = mapData.external_source ? "" : (mapData.name || "").toLowerCase();
     const looksBoostTarget = mapNameLower.includes("boost target map");
     // For boost target we rely on swap logic; don't swap labels here to avoid double inversions
 
@@ -2076,6 +2080,8 @@ const [axesSwapped, setAxesSwapped] = useState<boolean>(false); // Track if axes
   // Determine if axes should be swapped based on map name and description
   // Some maps like "IQ by MAP limiter" have axes swapped in the file
   const shouldSwapAxes = (mapData: MapViewerProps['mapData']): boolean => {
+    // Map importée : orientation du fichier, jamais de transposition par le nom
+    if (mapData.external_source) return false;
     const mapName = (mapData.name || "").toLowerCase();
     const description = (mapData.description || "").toLowerCase();
     
@@ -2191,7 +2197,7 @@ const [axesSwapped, setAxesSwapped] = useState<boolean>(false); // Track if axes
     }
 
 
-    const mapNameLower = (mapData.name || "").toLowerCase();
+    const mapNameLower = mapData.external_source ? "" : (mapData.name || "").toLowerCase();
     const isInjectorDuration = mapNameLower.includes("injector duration") && !mapNameLower.includes("selector");
     const isInjectorDuration00 = isInjectorDuration && mapNameLower.includes("duration 00");
     const isInjectorDurationNon00 = isInjectorDuration && !isInjectorDuration00;
@@ -2294,7 +2300,7 @@ const [axesSwapped, setAxesSwapped] = useState<boolean>(false); // Track if axes
     // In EDCsuite display: X (columns) = RPM, Y (rows) = Temp
     // So we need: X should read from 0x4d458 (RPM) with correction 1.0, Y should read from 0x4d46e (Temp) with correction 0.1/-273.1
     // The backend has swapped the addresses, so we need to swap them back AND swap corrections
-    const isStartIQ = mapData.name?.toLowerCase().includes("start iq");
+    const isStartIQ = mapNameLower.includes("start iq");
     
     // For Start IQ: backend has axes swapped
     // Backend sends: x_axis_address = 0x4d458 (RPM values), y_axis_address = 0x4d46e (Temp values)
@@ -2616,10 +2622,10 @@ const [axesSwapped, setAxesSwapped] = useState<boolean>(false); // Track if axes
       // CRITICAL: Determine correct Y axis order based on map type
       // - RPM maps: descending order (largest at top, smallest at bottom) - EDCsuite standard
       // - Torque limiter and mbar/pressure maps: ascending order (smallest at bottom, largest at top)
-      const isTorqueLimiter = mapData.name?.toLowerCase().includes("torque limiter");
-      const isIQByMap = mapData.name?.toLowerCase().includes("iq by map");
-      const isIQByMAF = mapData.name?.toLowerCase().includes("iq by maf");
-      const isStartIQ = mapData.name?.toLowerCase().includes("start iq");
+      const isTorqueLimiter = mapNameLower.includes("torque limiter");
+      const isIQByMap = mapNameLower.includes("iq by map");
+      const isIQByMAF = mapNameLower.includes("iq by maf");
+      const isStartIQ = mapNameLower.includes("start iq");
       
       if (tempYLabels.length > 1) {
         const firstY = parseFloat(tempYLabels[0]);
@@ -2724,7 +2730,7 @@ const [axesSwapped, setAxesSwapped] = useState<boolean>(false); // Track if axes
             // EDC16 (all variants) and Marelli MJD6 use Big-Endian by default,
             // EDC15 and others use Little-Endian
             // Special case: SOI Selector is always Little-Endian (even if flag is missing from old detections)
-            const isSOISelector = mapData.name?.toLowerCase().includes('soi selector');
+            const isSOISelector = mapNameLower.includes('soi selector');
             const mapIsLittleEndian = mapData.is_little_endian === true || isSOISelector;
             const useBigEndian = !mapIsLittleEndian && isBigEndianEcu(ecuType);
 
@@ -2805,7 +2811,7 @@ const [axesSwapped, setAxesSwapped] = useState<boolean>(false); // Track if axes
       // For Torque limiter and similar maps with mbar/pressure Y axis, display should be ASCENDING
       // (smallest at bottom, largest at top)
       // For RPM maps, display should be DESCENDING (largest at top, smallest at bottom)
-      const isTorqueLimiter = mapData.name?.toLowerCase().includes("torque limiter");
+      const isTorqueLimiter = mapNameLower.includes("torque limiter");
       
       if (isTorqueLimiter) {
         // Torque limiter: Y axis should be descending (1000 at top, 500 at bottom) - same as RPM maps
@@ -2818,7 +2824,7 @@ const [axesSwapped, setAxesSwapped] = useState<boolean>(false); // Track if axes
       } else {
         // Standard RPM maps: Y axis should be descending (largest at top, smallest at bottom)
         // This includes "Start IQ" which has RPM on Y axis
-        const isStartIQ = mapData.name?.toLowerCase().includes("start iq");
+        const isStartIQ = mapNameLower.includes("start iq");
         if (fileOrderIsAscending && displayOrderIsDescending) {
           values.reverse(); flipRowsReversed();
         } else if (!fileOrderIsAscending && displayOrderIsDescending) {
@@ -2832,8 +2838,8 @@ const [axesSwapped, setAxesSwapped] = useState<boolean>(false); // Track if axes
       }
 
       // Special handling for "IQ by MAP" and "IQ by MAF" - align values with reversed Y axis labels
-      const isIQByMap = mapData.name?.toLowerCase().includes("iq by map");
-      const isIQByMAF = mapData.name?.toLowerCase().includes("iq by maf");
+      const isIQByMap = mapNameLower.includes("iq by map");
+      const isIQByMAF = mapNameLower.includes("iq by maf");
       if ((isIQByMap || isIQByMAF) && values.length > 0 && yLabels.length > 0 && tempYLabels && tempYLabels.length > 0) {
         // IQ by MAP/MAF: Y axis (RPM) should be DESCENDING (5355 at top, 861 at bottom) like EDCsuite
         const mapType = isIQByMAF ? "IQ by MAF" : "IQ by map";
@@ -2855,7 +2861,7 @@ const [axesSwapped, setAxesSwapped] = useState<boolean>(false); // Track if axes
 
       // Special handling for "Start IQ" - the row with zeros should be at the top
       // BUT: Y axis (RPM) must ALWAYS be descending (1400 at top, 0 at bottom) - EDCsuite standard
-      const isStartIQ = mapData.name?.toLowerCase().includes("start iq");
+      const isStartIQ = mapNameLower.includes("start iq");
       if (isStartIQ && values.length > 0) {
         // Check if the last row (bottom) has zeros
         const lastRow = values[values.length - 1];

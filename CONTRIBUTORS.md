@@ -17,11 +17,11 @@ The historical thanks, to the people whose earlier work made this project possib
 - [@Informapa](https://github.com/Informapa) — a 2.5 V6 EDC15VM taken for an EDC15P, which left it with almost no map (1.2.0).
 - [@kultss](https://github.com/kultss) — the power curves named with the real codeblock numbers of the file (1.1.8), and the injector duration axes written back to the wrong axis, or without their factor, on EDC15P (1.2.1).
 - [@NiwiTheFox](https://github.com/NiwiTheFox) — a 038906019FJ that turned up three problems at once: the overboost limit not found, the airflow limiter wrongly expected, and the driver wish axes swapped (1.1.9).
-- [@hunterw7](https://github.com/hunterw7) — the launch control and the fault codes losing their bytes when a version was saved a second time (1.1.9).
+- [@hunterw7](https://github.com/hunterw7) — the launch control and the fault codes losing their bytes when a version was saved a second time (1.1.9), then the launch control answering "no maps found" on an EDC15VM file that already had it (1.2.4).
 - [@BGRibeiro00](https://github.com/BGRibeiro00) — the same loss seen from the fault-code side, on a 1.4 TDI (1.1.9), and fault codes that do not exist on the ECU listed on that 1.4 TDI (1.2.1).
 - [@yovko82](https://github.com/yovko82) — the editor on a 1024 by 768 screen: the zoom ceiling, the window opening under the taskbar, and the map window that would not fill (1.1.9), then the editor zoom that dropped to 50 % after the window was minimized, and the map orientation and display settings remembered for the whole map family and per ECU type, from the editor settings (1.2.1).
 - [@TechPro120](https://github.com/TechPro120) — the smoke switches of the EDC16 software that runs on lambda, missing on a 038906016K (1.2.1).
-- [@Marvx1j](https://github.com/Marvx1j) — the launch control on the 038906019HJ (1.1.6).
+- [@Marvx1j](https://github.com/Marvx1j) — the launch control on the 038906019HJ (1.1.6), and its map vanishing from the project after an update (1.2.4).
 - [@Yonifarolas](https://github.com/Yonifarolas) — multimap files and the codeblock they add, now shown on their version (1.1.6).
 - [@LJ-PVD](https://github.com/LJ-PVD) — full screen.
 - **mkjar**, on the ecuconnections thread — the fault codes of the compact EDC15 software (1.1.7).

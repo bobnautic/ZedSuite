@@ -1543,14 +1543,14 @@ impl EDC15PDetector {
 
     /// Find BIP temperature correction by byte sequence
     /// C# pattern: { 0x0A, 0x00, 0x4D, 0x09, 0xE3, 0x09, 0x47, 0x0A }
-    /// Boost control PID curves (Stage X names): four 16-point curves per
+    /// Boost control PID curves (reference names): four 16-point curves per
     /// codeblock, each `[id lo] C0 10 00`, 16 ascending axis values, 16 values.
     /// On every EDC15P of the bench (37 files, axis ids 0xC040 / 0xC04C /
     /// 0xC050 / 0xC056 depending on the software) they come in the same order
     /// and at the same spacing, I gain, D gain, DT1 memory factor, P gain
     /// (+0, +0xCC, +0x110, +0x3CA, or +0xDE / +0x122 / +0x3DE on the compact
     /// layout), and nothing else in the file carries that header. The 019A of
-    /// 1999 has none. Values signed, factor 0.0001 (Stage X); the axis is the
+    /// 1999 has none. Values signed, factor 0.0001 (reference); the axis is the
     /// boost deviation in mbar.
     fn find_pid_maps(&self, data: &[u8], maps: &mut Vec<DetectedMap>, detected_addresses: &mut HashSet<u32>) {
         const NAMES: [(&str, &str); 4] = [

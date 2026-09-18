@@ -15,11 +15,12 @@ export interface MapValueRange {
 }
 
 export function getMapValueRange(
-  map: { name?: string; unit?: string | null; data_type?: string },
+  map: { name?: string; unit?: string | null; data_type?: string; external_source?: string | null },
   factor: number,
   offset: number,
 ): MapValueRange | null {
-  const name = (map.name || "").toLowerCase();
+  // Map importée : pas de borne par le nom, seulement celle du type brut
+  const name = map.external_source ? "" : (map.name || "").toLowerCase();
   if (name.includes("n75")) {
     return { min: 0, max: 100 };
   }

@@ -41,6 +41,25 @@ export interface SolutionImplementation {
   name: string;
   description: string;
   applyBinaryPatches: (fileData: Uint8Array) => BinaryPatch[];
+  /**
+   * La solution est-elle DEJA ecrite dans ces octets ?
+   *
+   * Indispensable parce qu'une solution qui ecrase sa propre signature
+   * ne se retrouve plus ensuite : `applyBinaryPatches` renvoie zero
+   * patch sur un fichier deja traite, exactement comme sur un fichier
+   * qui n'a jamais eu la zone. Sans ce controle, l'app annoncait des
+   * maps introuvables a quelqu'un dont le fichier etait deja pret
+   * (issues #40 et #41).
+   */
+  isApplied?: (fileData: Uint8Array) => boolean;
+  /**
+   * Les maps rendues disponibles par une application ANTERIEURE de la
+   * solution, retrouvees dans les octets. Le detecteur ne les voit pas :
+   * il cherche la signature d'origine, que la solution a ecrasee. Sans
+   * ca, un projet cree depuis un fichier deja traite n'affichait jamais
+   * sa map de launch control (issue #41).
+   */
+  appliedMaps?: (fileData: Uint8Array) => NonNullable<BinaryPatch['createsMap']>[];
 }
 
 export interface Solution {
@@ -163,11 +182,66 @@ const LC_SEQUENCE = [
 ];
 const LC_MASK = [0, 0, 1, 1, 1, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 1];
 
+/** La map de launch control d'une zone, deduite de l'adresse de sa
+ *  signature : meme geometrie pour l'application et pour la relecture. */
+function launchControlMapAt(signatureAddress: number): NonNullable<BinaryPatch['createsMap']> {
+  return {
+    name: 'Launch control map',
+    address: signatureAddress + MAP_OFFSET,
+    size: 700,
+    rows: 14,
+    cols: 25,
+    category: 'Launch control',
+    subcategory: 'Launch control',
+    correction_factor: 0.01,
+    x_axis_correction: 1.0,
+    y_axis_correction: 0.15625,
+    // Axe Y apres les 2 octets joker + l'en-tete ; axe X decale de 2 octets
+    // pour aligner les etiquettes sur les donnees (convention de la web app).
+    x_axis_address: signatureAddress + 36,
+    y_axis_address: signatureAddress + 4,
+    x_label: 'Engine speed (rpm)',
+    y_label: 'Vehicle speed (km/h)',
+    unit: 'mg/st',
+    description: 'IQ limit | X: Engine speed (rpm) | Y: Vehicle speed (km/h)',
+    y_axis_inverted: true,
+  };
+}
+
 export const launchControl: SolutionImplementation = {
   id: 'launch_control',
   name: 'Launch Control',
   description:
     "Active le Launch Control en écrivant l'axe de vitesse véhicule (km/h) de la cartographie",
+
+  /**
+   * L'axe de vitesse ecrit par la solution se reconnait a ses 14 paliers
+   * precedes de leur compteur : une suite de 30 octets assez specifique
+   * pour ne pas se trouver par hasard. On la cherche dans tout le
+   * fichier, parce que la signature d'origine, elle, a ete ecrasee par
+   * l'ecriture de cet axe.
+   */
+  isApplied: (fileData: Uint8Array): boolean => {
+    const axis = generateLaunchControlYAxisBytes();
+    return findSequence(fileData, 0, axis, axis.map(() => 1)) !== -1;
+  },
+
+  /** Chaque axe ecrit marque une zone appliquee ; la map se deduit de sa
+   *  position comme au moment du patch (axe = signature + 2). */
+  appliedMaps: (fileData: Uint8Array) => {
+    const axis = generateLaunchControlYAxisBytes();
+    const mask = axis.map(() => 1);
+    const out: NonNullable<BinaryPatch['createsMap']>[] = [];
+    let offset = 0;
+    while (offset < fileData.length) {
+      const at = findSequence(fileData, offset, axis, mask);
+      if (at === -1) break;
+      const signatureAddress = at - 2;
+      out.push(launchControlMapAt(signatureAddress));
+      offset = at + 1;
+    }
+    return out;
+  },
 
   applyBinaryPatches: (fileData: Uint8Array): BinaryPatch[] => {
     const patches: BinaryPatch[] = [];
@@ -177,37 +251,13 @@ export const launchControl: SolutionImplementation = {
       const signatureAddress = findSequence(fileData, offset, LC_SEQUENCE, LC_MASK);
       if (signatureAddress === -1) break;
 
-      const mapDataAddress = signatureAddress + MAP_OFFSET;
-      // Axe Y après les 2 octets joker + l'en-tête ; axe X décalé de 2 octets
-      // pour aligner les étiquettes sur les données (convention de la web app).
-      const yAxisAddress = signatureAddress + 4;
-      const xAxisAddress = signatureAddress + 36;
-
       patches.push({
         address: signatureAddress + 2,
         data: generateLaunchControlYAxisBytes(),
         description: `Launch Control Y-axis @ 0x${(signatureAddress + 2)
           .toString(16)
           .toUpperCase()}`,
-        createsMap: {
-          name: 'Launch control map',
-          address: mapDataAddress,
-          size: 700,
-          rows: 14,
-          cols: 25,
-          category: 'Launch control',
-          subcategory: 'Launch control',
-          correction_factor: 0.01,
-          x_axis_correction: 1.0,
-          y_axis_correction: 0.15625,
-          x_axis_address: xAxisAddress,
-          y_axis_address: yAxisAddress,
-          x_label: 'Engine speed (rpm)',
-          y_label: 'Vehicle speed (km/h)',
-          unit: 'mg/st',
-          description: 'IQ limit | X: Engine speed (rpm) | Y: Vehicle speed (km/h)',
-          y_axis_inverted: true,
-        },
+        createsMap: launchControlMapAt(signatureAddress),
       });
 
       offset = signatureAddress + 1;

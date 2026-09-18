@@ -359,17 +359,26 @@ export async function handleLocalApi(
         ecuType: fileRecord.ecu_type || undefined,
       });
 
-      // Les maps venues d'un projet WinOLS ne se re-détectent pas (le .ols
-      // n'est plus là) : on les garde telles quelles à côté des nouvelles.
-      let previousOls: any[] = [];
+      // Deux familles de maps ne se re-détectent pas et doivent survivre :
+      // celles d'un fichier de définitions importé (le .ols n'est plus là)
+      // et celles qu'une solution a créées, absentes du fichier d'origine
+      // sur lequel tourne le scan. Sans ça, la map de launch control
+      // disparaissait du projet à la première re-détection venue
+      // (issues #40 et #41).
+      let preserved: any[] = [];
       try {
         const prev = typeof fileRecord.detection_data === "string"
           ? JSON.parse(fileRecord.detection_data)
           : fileRecord.detection_data;
-        previousOls = (prev?.maps || []).filter((mp: any) => !!mp?.external_source);
+        preserved = (prev?.maps || []).filter(
+          (mp: any) => !!mp?.external_source || !!mp?.created_by_solution
+        );
       } catch {}
-      if (previousOls.length > 0) {
-        results.maps = [...results.maps, ...previousOls];
+      if (preserved.length > 0) {
+        // une map re-détectée à la même adresse prime sur la copie gardée
+        const found = new Set(results.maps.map((mp: any) => mp.address));
+        const kept = preserved.filter((mp: any) => !found.has(mp.address));
+        results.maps = [...results.maps, ...kept];
         results.total_maps = results.maps.length;
       }
 

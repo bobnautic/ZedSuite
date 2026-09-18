@@ -58,7 +58,7 @@ import { PowerEstimateModal } from "@/components/power-estimate-modal";
 import type { FileRecord } from "@/lib/types";
 import { PROJECT_NAME_MAX_LENGTH } from "@/lib/types";
 import { SolutionsModal } from "@/components/solutions-modal";
-import { getSolutionImplementation, isLaunchControlActive } from "@/lib/ecu/solutions";
+import { getSolutionImplementation, getSolutionsForECU, isLaunchControlActive } from "@/lib/ecu/solutions";
 import { CompareModal } from "@/components/compare-modal";
 import FloatingLines from "@/components/FloatingLines";
 import ZedGradientDefs, { ZedFileIcon } from "@/components/zed-gradient-defs";
@@ -143,6 +143,10 @@ interface MapData {
   /** « OLS », « XDF » ou « JSON » : map venue d'un fichier de définitions
    *  importé, et non du détecteur. */
   external_source?: string | null;
+  /** Identifiant de la solution qui a créé cette map (« launch_control ») :
+   *  elle n'existe pas dans le fichier d'origine, une re-détection ne la
+   *  retrouverait pas. */
+  created_by_solution?: string | null;
   /** Points d'axe écrits dans le fichier de définitions au lieu d'être lus
    *  dans le binaire (axe fixe d'un XDF). */
   x_axis_values?: number[] | null;
@@ -201,6 +205,17 @@ interface VersionDto {
 
 // Helper to save project data to sessionStorage WITHOUT file_data to avoid quota exceeded
 // The file_data is stored in PocketBase and loaded on demand
+/** Un .xdf ou un mappack .json plutôt qu'un binaire : premier caractère
+ *  utile du fichier, après l'éventuel BOM UTF-8 et les blancs. */
+const looksLikeDefinitionFile = (bytes: Uint8Array): boolean => {
+  let i = 0;
+  if (bytes.length >= 3 && bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) i = 3;
+  while (i < bytes.length && i < 64 && (bytes[i] === 0x20 || bytes[i] === 0x09 || bytes[i] === 0x0a || bytes[i] === 0x0d)) i++;
+  if (i >= bytes.length) return false;
+  const c = bytes[i];
+  return c === 0x3c /* < */ || c === 0x7b /* { */ || c === 0x5b /* [ */;
+};
+
 const saveProjectToSession = (data: ProjectData) => {
   const { file_data, ...dataWithoutFileData } = data;
   try {
@@ -363,6 +378,7 @@ function MapPropertiesModal({
   theme = 'default',
   workspaceRef,
 }: MapPropertiesModalProps) {
+  const { t } = useI18n();
   const [activeTab, setActiveTab] = useState<'map' | 'xAxis' | 'yAxis'>('map');
   const [localSettings, setLocalSettings] = useState<MapDisplaySettings>(settings);
   const [position, setPosition] = useState({ x: 0, y: 0 });
@@ -517,7 +533,7 @@ function MapPropertiesModal({
             onMouseDown={handleDragStart}
           >
             <h2 className={`text-xl font-bold ${isLight ? 'text-black' : 'text-white'} pointer-events-none`}>
-              Properties
+              {t.mapProperties.title}
               <span className={`ml-2 text-sm font-normal ${textMutedClass}`}>
                 {mapData.name || ''} — ${mapData.address.toString(16).toUpperCase()}
               </span>
@@ -536,7 +552,7 @@ function MapPropertiesModal({
                 }`}
                 onClick={() => setActiveTab(tab)}
               >
-                {tab === 'map' ? 'Map' : tab === 'xAxis' ? 'X Axis' : 'Y Axis'}
+                {tab === 'map' ? t.mapProperties.tabMap : tab === 'xAxis' ? t.mapProperties.tabXAxis : t.mapProperties.tabYAxis}
                 {activeTab === tab && (
                   <div className={`absolute bottom-0 left-0 right-0 h-0.5 ${isLight ? 'bg-black' : 'bg-white'}`} />
                 )}
@@ -549,25 +565,25 @@ function MapPropertiesModal({
             <div className="space-y-3">
               {/* Row 1: Name */}
               <div>
-                <label className={labelClass}>Name</label>
+                <label className={labelClass}>{t.mapProperties.name}</label>
                 <input type="text" value={localSettings.name} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} placeholder="Map name" />
               </div>
 
               {/* Row 3: Start address, Width x Height, Skip bytes */}
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className={labelClass}>Start address</label>
+                  <label className={labelClass}>{t.mapProperties.startAddress}</label>
                   <input type="text" value={'$' + localSettings.startAddress} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed font-mono`} placeholder="$DDA7C" />
                 </div>
                 <div>
-                  <label className={labelClass}>Width x Height</label>
+                  <label className={labelClass}>{t.mapProperties.widthHeight}</label>
                   <div className="flex gap-1">
                     <input type="number" value={localSettings.width} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} min={1} />
                     <input type="number" value={localSettings.height} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} min={1} />
                   </div>
                 </div>
                 <div>
-                  <label className={labelClass}>Skip bytes/line</label>
+                  <label className={labelClass}>{t.mapProperties.skipBytes}</label>
                   <input type="number" value={localSettings.skipBytesPerLine} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} min={0} />
                 </div>
               </div>
@@ -575,19 +591,19 @@ function MapPropertiesModal({
               {/* Row 4: Word size, Data org, Number format, Precision */}
               <div className="grid grid-cols-4 gap-3">
                 <div>
-                  <label className={labelClass}>Word size</label>
+                  <label className={labelClass}>{t.mapProperties.wordSize}</label>
                   <input type="text" value={localSettings.wordSize} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
                 <div>
-                  <label className={labelClass}>Data org</label>
+                  <label className={labelClass}>{t.mapProperties.dataOrg}</label>
                   <input type="text" value={localSettings.dataOrganization} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
                 <div>
-                  <label className={labelClass}>Format</label>
+                  <label className={labelClass}>{t.mapProperties.format}</label>
                   <input type="text" value={localSettings.numberFormat} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
                 <div>
-                  <label className={labelClass}>Precision</label>
+                  <label className={labelClass}>{t.mapProperties.precision}</label>
                   <input type="number" value={localSettings.precision} onChange={(e) => updateMapSetting('precision', Math.max(0, Math.min(6, parseInt(e.target.value) || 0)))} className={inputClass} min={0} max={6} />
                 </div>
               </div>
@@ -595,9 +611,9 @@ function MapPropertiesModal({
               {/* Row 5: Factor + Sign */}
               <div className="flex items-end gap-3">
                 <div className="flex-1">
-                  <label className={labelClass}>Factor</label>
+                  <label className={labelClass}>{t.mapProperties.factor}</label>
                   <div className={`flex items-center gap-2 text-sm ${isLight ? 'text-gray-700' : 'text-white'}`}>
-                    <span>Value =</span>
+                    <span>{t.mapProperties.value}</span>
                     <input type="number" step="0.001" value={localSettings.factor} onChange={(e) => updateMapSetting('factor', parseFloat(e.target.value) || 1)} className={`w-20 ${smallInputClass}`} />
                     <span>× Eprom +</span>
                     <input type="number" step="0.1" value={localSettings.offset} onChange={(e) => updateMapSetting('offset', parseFloat(e.target.value) || 0)} className={`w-16 ${smallInputClass}`} />
@@ -615,15 +631,15 @@ function MapPropertiesModal({
               {/* Row 1: Unit, Data source, Start address */}
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className={labelClass}>Unit</label>
+                  <label className={labelClass}>{t.mapProperties.unit}</label>
                   <input type="text" value={localSettings.xAxis.unit} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} placeholder="RPM" />
                 </div>
                 <div>
-                  <label className={labelClass}>Data source</label>
+                  <label className={labelClass}>{t.mapProperties.dataSource}</label>
                   <input type="text" value={localSettings.xAxis.dataSource === 'values' ? '[1, 2, 3, ...]' : 'ROM'} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
                 <div>
-                  <label className={labelClass}>Start address</label>
+                  <label className={labelClass}>{t.mapProperties.startAddress}</label>
                   <input type="text" value={localSettings.xAxis.startAddress ? '$' + localSettings.xAxis.startAddress : ''} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed font-mono`} placeholder="$DDA78" />
                 </div>
               </div>
@@ -631,19 +647,19 @@ function MapPropertiesModal({
               {/* Row 2: Skip bytes, Word size, Data org, Format */}
               <div className="grid grid-cols-4 gap-3">
                 <div>
-                  <label className={labelClass}>Skip bytes/line</label>
+                  <label className={labelClass}>{t.mapProperties.skipBytes}</label>
                   <input type="number" value={localSettings.xAxis.skipBytesPerLine} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} min={0} />
                 </div>
                 <div>
-                  <label className={labelClass}>Word size</label>
+                  <label className={labelClass}>{t.mapProperties.wordSize}</label>
                   <input type="text" value={localSettings.xAxis.wordSize} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
                 <div>
-                  <label className={labelClass}>Data org</label>
+                  <label className={labelClass}>{t.mapProperties.dataOrg}</label>
                   <input type="text" value={localSettings.xAxis.dataOrganization} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
                 <div>
-                  <label className={labelClass}>Format</label>
+                  <label className={labelClass}>{t.mapProperties.format}</label>
                   <input type="text" value={localSettings.xAxis.numberFormat} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
               </div>
@@ -651,9 +667,9 @@ function MapPropertiesModal({
               {/* Row 4: Factor + Sign + Mirror */}
               <div className="flex items-end gap-3">
                 <div className="flex-1">
-                  <label className={labelClass}>Factor</label>
+                  <label className={labelClass}>{t.mapProperties.factor}</label>
                   <div className={`flex items-center gap-2 text-sm ${isLight ? 'text-gray-700' : 'text-white'}`}>
-                    <span>Value =</span>
+                    <span>{t.mapProperties.value}</span>
                     <input type="number" step="0.001" value={localSettings.xAxis.factor} onChange={(e) => updateXAxisSetting('factor', parseFloat(e.target.value) || 1)} className={`w-20 ${smallInputClass}`} />
                     <span>× Eprom +</span>
                     <input type="number" step="0.1" value={localSettings.xAxis.offset} onChange={(e) => updateXAxisSetting('offset', parseFloat(e.target.value) || 0)} className={`w-16 ${smallInputClass}`} />
@@ -662,7 +678,7 @@ function MapPropertiesModal({
                   </div>
                 </div>
                 <div className="w-24">
-                  <label className={labelClass}>Precision</label>
+                  <label className={labelClass}>{t.mapProperties.precision}</label>
                   <input type="number" value={localSettings.xAxis.precision} onChange={(e) => updateXAxisSetting('precision', Math.max(0, Math.min(6, parseInt(e.target.value) || 0)))} className={inputClass} min={0} max={6} />
                 </div>
               </div>
@@ -670,7 +686,7 @@ function MapPropertiesModal({
               {/* Mirror option */}
               <div className={`flex items-center gap-3 p-2.5 rounded-lg border ${isLight ? 'bg-blue-50 border-blue-200' : 'bg-blue-500/10 border-blue-500/30'}`}>
                 <input type="checkbox" checked={localSettings.xAxis.mirror} onChange={(e) => updateXAxisSetting('mirror', e.target.checked)} className={checkboxClass} id="xAxisMirror" />
-                <label htmlFor="xAxisMirror" className={`text-sm font-medium cursor-pointer ${isLight ? 'text-blue-800' : 'text-blue-300'}`}>Mirror map (reverse axis order)</label>
+                <label htmlFor="xAxisMirror" className={`text-sm font-medium cursor-pointer ${isLight ? 'text-blue-800' : 'text-blue-300'}`}>{t.mapProperties.mirror}</label>
               </div>
             </div>
           )}
@@ -681,15 +697,15 @@ function MapPropertiesModal({
               {/* Row 1: Unit, Data source, Start address */}
               <div className="grid grid-cols-3 gap-3">
                 <div>
-                  <label className={labelClass}>Unit</label>
+                  <label className={labelClass}>{t.mapProperties.unit}</label>
                   <input type="text" value={localSettings.yAxis.unit} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} placeholder="mg/str" />
                 </div>
                 <div>
-                  <label className={labelClass}>Data source</label>
+                  <label className={labelClass}>{t.mapProperties.dataSource}</label>
                   <input type="text" value={localSettings.yAxis.dataSource === 'values' ? '[1, 2, 3, ...]' : 'ROM'} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
                 <div>
-                  <label className={labelClass}>Start address</label>
+                  <label className={labelClass}>{t.mapProperties.startAddress}</label>
                   <input type="text" value={localSettings.yAxis.startAddress ? '$' + localSettings.yAxis.startAddress : ''} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed font-mono`} placeholder="$Hex" />
                 </div>
               </div>
@@ -697,19 +713,19 @@ function MapPropertiesModal({
               {/* Row 2: Skip bytes, Word size, Data org, Format */}
               <div className="grid grid-cols-4 gap-3">
                 <div>
-                  <label className={labelClass}>Skip bytes/line</label>
+                  <label className={labelClass}>{t.mapProperties.skipBytes}</label>
                   <input type="number" value={localSettings.yAxis.skipBytesPerLine} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} min={0} />
                 </div>
                 <div>
-                  <label className={labelClass}>Word size</label>
+                  <label className={labelClass}>{t.mapProperties.wordSize}</label>
                   <input type="text" value={localSettings.yAxis.wordSize} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
                 <div>
-                  <label className={labelClass}>Data org</label>
+                  <label className={labelClass}>{t.mapProperties.dataOrg}</label>
                   <input type="text" value={localSettings.yAxis.dataOrganization} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
                 <div>
-                  <label className={labelClass}>Format</label>
+                  <label className={labelClass}>{t.mapProperties.format}</label>
                   <input type="text" value={localSettings.yAxis.numberFormat} readOnly disabled className={`${inputClass} opacity-60 cursor-not-allowed`} />
                 </div>
               </div>
@@ -717,9 +733,9 @@ function MapPropertiesModal({
               {/* Row 4: Factor + Sign + Mirror */}
               <div className="flex items-end gap-3">
                 <div className="flex-1">
-                  <label className={labelClass}>Factor</label>
+                  <label className={labelClass}>{t.mapProperties.factor}</label>
                   <div className={`flex items-center gap-2 text-sm ${isLight ? 'text-gray-700' : 'text-white'}`}>
-                    <span>Value =</span>
+                    <span>{t.mapProperties.value}</span>
                     <input type="number" step="0.001" value={localSettings.yAxis.factor} onChange={(e) => updateYAxisSetting('factor', parseFloat(e.target.value) || 1)} className={`w-20 ${smallInputClass}`} />
                     <span>× Eprom +</span>
                     <input type="number" step="0.1" value={localSettings.yAxis.offset} onChange={(e) => updateYAxisSetting('offset', parseFloat(e.target.value) || 0)} className={`w-16 ${smallInputClass}`} />
@@ -728,7 +744,7 @@ function MapPropertiesModal({
                   </div>
                 </div>
                 <div className="w-24">
-                  <label className={labelClass}>Precision</label>
+                  <label className={labelClass}>{t.mapProperties.precision}</label>
                   <input type="number" value={localSettings.yAxis.precision} onChange={(e) => updateYAxisSetting('precision', Math.max(0, Math.min(6, parseInt(e.target.value) || 0)))} className={inputClass} min={0} max={6} />
                 </div>
               </div>
@@ -736,7 +752,7 @@ function MapPropertiesModal({
               {/* Mirror option */}
               <div className={`flex items-center gap-3 p-2.5 rounded-lg border ${isLight ? 'bg-blue-50 border-blue-200' : 'bg-blue-500/10 border-blue-500/30'}`}>
                 <input type="checkbox" checked={localSettings.yAxis.mirror} onChange={(e) => updateYAxisSetting('mirror', e.target.checked)} className={checkboxClass} id="yAxisMirror" />
-                <label htmlFor="yAxisMirror" className={`text-sm font-medium cursor-pointer ${isLight ? 'text-blue-800' : 'text-blue-300'}`}>Mirror map (reverse axis order)</label>
+                <label htmlFor="yAxisMirror" className={`text-sm font-medium cursor-pointer ${isLight ? 'text-blue-800' : 'text-blue-300'}`}>{t.mapProperties.mirror}</label>
               </div>
             </div>
           )}
@@ -746,13 +762,13 @@ function MapPropertiesModal({
             <button
               onClick={() => setLocalSettings(getDefaultMapDisplaySettings(mapData))}
               className={`px-4 py-1.5 rounded-lg transition-colors font-medium border ${isLight ? 'text-gray-600 border-gray-300 hover:bg-gray-100' : 'text-white/70 border-white/20 hover:bg-white/10'}`}
-              title="Restore the detected values"
+              title={t.mapProperties.resetHint}
             >
-              Reset
+              {t.mapProperties.reset}
             </button>
             <div className="flex items-center gap-3">
-              <button onClick={onClose} className={`px-4 py-1.5 rounded-lg transition-colors font-medium ${isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-white/70 hover:bg-white/10'}`}>Cancel</button>
-              <button onClick={handleSave} className="px-5 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium">Save</button>
+              <button onClick={onClose} className={`px-4 py-1.5 rounded-lg transition-colors font-medium ${isLight ? 'text-gray-600 hover:bg-gray-100' : 'text-white/70 hover:bg-white/10'}`}>{t.common.cancel}</button>
+              <button onClick={handleSave} className="px-5 py-1.5 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium">{t.common.save}</button>
             </div>
           </div>
         </div>
@@ -1728,7 +1744,7 @@ function PreviewWindow({
 function stripSoiTag<T extends { maps?: { name?: string }[] } | null | undefined>(detectionResults: T): T {
   if (!detectionResults || !Array.isArray(detectionResults.maps)) return detectionResults;
   const maps = detectionResults.maps.map((m) =>
-    typeof m?.name === "string" && m.name.includes(" (SOI)")
+    typeof m?.name === "string" && m.name.includes(" (SOI)") && !(m as { external_source?: string | null }).external_source
       ? { ...m, name: m.name.replace(" (SOI)", "") }
       : m
   );
@@ -2305,6 +2321,88 @@ function EditorPageContent() {
   const [usedSolutions, setUsedSolutions] = useState<Record<string, string>>({});
   const [solutionNotification, setSolutionNotification] = useState<{ count: number; visible: boolean; fading: boolean }>({ count: 0, visible: false, fading: false });
 
+  /**
+   * Solutions déjà écrites dans la version ouverte, relues dans les octets.
+   *
+   * `usedSolutions` ne se remplissait qu'au moment où l'utilisateur
+   * appliquait une solution : à la réouverture du projet, un fichier déjà
+   * traité s'affichait comme vierge, la case revenait décochée, et une
+   * nouvelle tentative échouait puisque la signature avait été écrasée par
+   * la première (issues #40 et #41). Les octets font foi, et la lecture
+   * suit la version affichée.
+   */
+  useEffect(() => {
+    const data = projectData?.file_data;
+    if (!data || data.length === 0) return;
+    const config = getSolutionsForECU(projectData?.ecu_type);
+    if (!config) return;
+    const bytes = new Uint8Array(data as unknown as number[]);
+    const versionName =
+      versions.find((v) => v.id === currentVersionId)?.name || "Ori";
+    const missing: MapData[] = [];
+    const known = new Set((projectData?.detectionResults?.maps ?? []).map((m) => m.address));
+    setUsedSolutions((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const solution of config.solutions) {
+        const impl = getSolutionImplementation(solution.id);
+        if (!impl?.isApplied) continue;
+        const applied = impl.isApplied(bytes);
+        if (applied && !next[solution.id]) {
+          next[solution.id] = versionName;
+          changed = true;
+        } else if (!applied && next[solution.id]) {
+          delete next[solution.id];
+          changed = true;
+        }
+        // La map d'une zone déjà appliquée, absente de la liste : le
+        // détecteur ne la voit pas (signature écrasée), la solution la
+        // retrouve. Projet créé depuis un fichier déjà traité (issue #41).
+        if (applied && impl.appliedMaps) {
+          for (const info of impl.appliedMaps(bytes)) {
+            if (known.has(info.address)) continue;
+            known.add(info.address);
+            missing.push({
+              name: info.name,
+              address: info.address,
+              size: info.size,
+              dimensions: { TwoDimensional: { rows: info.rows, cols: info.cols } },
+              category: info.category,
+              subcategory: info.subcategory,
+              x_axis_address: info.x_axis_address,
+              y_axis_address: info.y_axis_address,
+              x_axis_correction: info.x_axis_correction,
+              y_axis_correction: info.y_axis_correction,
+              correction_factor: info.correction_factor,
+              x_label: info.x_label,
+              y_label: info.y_label,
+              unit: info.unit,
+              description: info.description,
+              y_axis_inverted: info.y_axis_inverted,
+              created_by_solution: solution.id,
+            } as MapData);
+          }
+        }
+      }
+      return changed ? next : prev;
+    });
+    if (missing.length > 0) {
+      setProjectData((prev) => {
+        if (!prev?.detectionResults) return prev;
+        const maps = [...prev.detectionResults.maps, ...missing];
+        const updated = {
+          ...prev,
+          detectionResults: { ...prev.detectionResults, maps, total_maps: maps.length },
+        };
+        saveProjectToSession(updated);
+        // écrite avec le projet, pour ne pas la redécouvrir à chaque ouverture
+        void axios.patch(`/api/files/${prev.fileId}`, { detection_data: updated.detectionResults }).catch(() => {});
+        return updated;
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectData?.file_data, projectData?.ecu_type, currentVersionId, versions]);
+
   // Mappack lock state
   const [mappackUnlocked, setMappackUnlocked] = useState(false);
   // True when this project's mappack has already been exported (loaded from
@@ -2782,6 +2880,15 @@ function EditorPageContent() {
         // Lire le fichier
         const arrayBuffer = await file.arrayBuffer();
         let uint8Array = new Uint8Array(arrayBuffer);
+        // Fichier de définitions de maps (.xdf TunerPro, mappack .json) :
+        // ce n'est pas une version, ce sont des maps. Reconnu au contenu
+        // — un binaire de calculateur ne commence jamais par « < », « { »
+        // ni « [ » — pour que le même bouton IMPORTER serve aux deux.
+        if (looksLikeDefinitionFile(uint8Array)) {
+          setLoadingAction(null);
+          await importDefinitionsFile(file);
+          return;
+        }
         // Projet WinOLS : importer les octets de la version qu'il contient.
         // Plusieurs versions = ambigu ici, ça se fait à la création d'un projet,
         // qui laisse choisir laquelle est l'original.
@@ -3109,6 +3216,7 @@ function EditorPageContent() {
       const dims2 = mapInfo.dimensions?.TwoDimensional;
       if (
         !ecuBigEndian &&
+        !mapInfo.external_source &&
         (mapInfo.name || '').toLowerCase().includes('boost target map') &&
         dims2 && dims2.rows !== dims2.cols &&
         xAddr > 2 && yAddr > 2
@@ -3619,13 +3727,28 @@ function EditorPageContent() {
 
   // (Ajustement auto désactivé sur ouverture)
 
+  /** Coin haut-gauche de la n-ième fenêtre ouverte : à droite de
+   *  l'hexdump tant qu'il n'a pas bougé, sinon depuis le coin, avec une
+   *  marche de cascade par fenêtre déjà ouverte. Même règle pour les maps
+   *  et pour la fenêtre de puissance. */
+  const cascadeOrigin = (index: number) => {
+    const gap = 4;
+    const offset = Math.min(index, 10) * 12;
+    const fromCorner = hexdumpCollapsed || hexdumpMovedFromOrigin;
+    return {
+      x: (fromCorner ? 0 : hexdumpLayout.x + hexdumpLayout.width + gap) + offset,
+      y: offset,
+    };
+  };
+
   const ensureLayoutForMap = (
     map: MapData,
     existingLayouts: Map<number, { x: number; y: number; width: number; height: number }>
   ) => {
     const mapValuesAny = (map as any)?.map_values;
     const dim = (map as any)?.dimensions?.TwoDimensional;
-    const mapName = (map.name || "").toLowerCase();
+    // Map importée : dimensions du fichier, aucune règle par le nom
+    const mapName = map.external_source ? "" : (map.name || "").toLowerCase();
 
     // Check if this map needs dimension swap (same logic as map-viewer.tsx)
     const apiRows = dim?.rows || 1;
@@ -3693,18 +3816,13 @@ function EditorPageContent() {
     }
 
 
-    const gap = 4;
     const newLayouts = new Map(existingLayouts);
-    const idx = newLayouts.size;
-    const offset = Math.min(idx, 10) * 12;
+    // la fenêtre de puissance compte comme une fenêtre ouverte
+    const origin = cascadeOrigin(newLayouts.size + (powerFile ? 1 : 0));
 
     const existing = newLayouts.get(map.address);
-    // Si l'hexdump a été déplacé de sa position d'origine, ouvrir les maps en cascade depuis le coin
-    const shouldUseCascadeFromCorner = hexdumpCollapsed || hexdumpMovedFromOrigin;
-    let posX =
-      (existing ? existing.x : shouldUseCascadeFromCorner ? 0 : hexdumpLayout.x + hexdumpLayout.width + gap) +
-      (existing ? 0 : offset);
-    let posY = (existing ? existing.y : 0) + (existing ? 0 : offset);
+    let posX = existing ? existing.x : origin.x;
+    let posY = existing ? existing.y : origin.y;
 
     const workspaceRect = workspaceRef.current?.getBoundingClientRect();
     if (workspaceRect) {
@@ -4604,16 +4722,24 @@ function EditorPageContent() {
   const openPowerEstimate = async () => {
     if (!projectData?.fileId) return;
     if (olsProjectBlocked()) return;
+    // Déjà ouverte : devant, comme une map qu'on reclique, sans la déplacer
+    if (powerFile) {
+      bringPowerToFront();
+      return;
+    }
     try {
       const record = await localStore.getFile(projectData.fileId);
       if (!record) return;
-      // Ouverture centrée en largeur (jamais plus étroite que la barre des
+      // Ouverture comme une fenêtre de map : marche suivante de la cascade,
+      // bornée à la zone de travail (jamais plus étroite que la barre des
       // pastilles) ; la hauteur s'ajuste ensuite au contenu
       const rect = workspaceRef.current?.getBoundingClientRect();
       if (rect) {
-        const width = Math.min(Math.max(860, powerMinWidth), Math.max(480, rect.width));
-        const height = Math.min(600, Math.max(360, rect.height));
-        setPowerLayout({ x: Math.max(0, (rect.width - width) / 2), y: 0, width, height });
+        const width = Math.min(Math.max(860, powerMinWidth), Math.max(480, rect.width - 8));
+        const height = Math.min(600, Math.max(360, rect.height - 8));
+        const origin = cascadeOrigin(mapLayouts.size);
+        const { x, y } = clampPosition(origin.x, origin.y, width, height);
+        setPowerLayout({ x, y, width, height });
       }
       powerAutoHeightRef.current = true;
       setPowerZIndex(Math.max(hexdumpZIndex, previewZIndex, ...openMaps.map((_, i) => 50 + i)) + 1);
@@ -5835,14 +5961,18 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
   const handleSaveMapDisplaySettings = (mapAddress: number, next: MapDisplaySettings) => {
     const maps: MapData[] = projectData?.detectionResults?.maps ?? [];
     const source = maps.find((m) => m.address === mapAddress);
-    const family = source ? mapFamilyKey(source.name) : null;
+    // Une map importée (.ols, .xdf, .json) se règle seule : ni propagation
+    // aux maps du même nom, ni mémoire par calculateur. Son fichier de
+    // définitions dit comment l'afficher, l'app n'ajoute rien par-dessus.
+    const sourceIsImported = !!source?.external_source;
+    const family = source && !sourceIsImported ? mapFamilyKey(source.name) : null;
     const overrides = source ? extractDisplayOverrides(next, getDefaultMapDisplaySettings(source)) : null;
     setMapDisplaySettingsStore(prev => {
       const newStore = new Map(prev);
       newStore.set(mapAddress, next);
       if (family !== null && overrides) {
         maps.forEach((m) => {
-          if (m.address === mapAddress || mapFamilyKey(m.name) !== family) return;
+          if (m.address === mapAddress || m.external_source || mapFamilyKey(m.name) !== family) return;
           newStore.set(m.address, applyDisplayOverrides(getDefaultMapDisplaySettings(m), overrides));
         });
       }
@@ -5888,6 +6018,7 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
       let changed = false;
       const newStore = new Map(prev);
       mapsForDisplayPrefs.forEach((m: MapData) => {
+        if (m.external_source) return; // une map importée n'hérite de rien
         const o = prefs[mapFamilyKey(m.name)];
         if (!o) return;
         const nextSettings = applyDisplayOverrides(getDefaultMapDisplaySettings(m), o);
@@ -5920,6 +6051,7 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
     if (!ecuKey || maps.length === 0) return;
     const done = new Set<string>();
     maps.forEach((m) => {
+      if (m.external_source) return;
       const stored = mapDisplaySettingsStore.get(m.address);
       if (!stored) return;
       const family = mapFamilyKey(m.name);
@@ -5992,9 +6124,24 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
     }
   };
 
-  const handleMapClick = (map: MapData) => {
+  /** Map du détecteur à la même adresse qu'une map importée, s'il y en a
+   *  une. Les fenêtres, les réglages d'affichage et les modifications sont
+   *  indexés par adresse : deux définitions du même bloc ne peuvent pas
+   *  coexister à l'écran sans se marcher dessus. Celle de l'app prime, les
+   *  solutions et les codes défaut s'appuient sur elle. */
+  const detectorTwinOf = (map: MapData): MapData | null => {
+    if (!map.external_source) return null;
+    const twin = projectData?.detectionResults?.maps?.find(
+      (m) => !m.external_source && m.address === map.address,
+    );
+    return twin ?? null;
+  };
+
+  const handleMapClick = (clicked: MapData) => {
     // Block map clicks when mappack is locked
     if (!mappackUnlocked) return;
+    // Une map importée doublon de l'app ouvre la fenêtre de l'app
+    const map = detectorTwinOf(clicked) ?? clicked;
 
     setOpenMaps((prev) => {
       // Si déjà ouverte, on la remet en haut de pile
@@ -6700,6 +6847,8 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                             {maps.map((map, index) => {
                               const isOpen = openMaps.some((openMap) => openMap.address === map.address);
                               const isModified = allMapModifications.has(map.address) || mapAxisLabels.has(map.address);
+                              // Doublon d'une map de l'app : même adresse, même fenêtre
+                              const twin = detectorTwinOf(map);
                               // Use codeblock_id directly from backend
                               const edcsuiteCodeblockId = map.codeblock_id || null;
 
@@ -6720,7 +6869,8 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                                     e.preventDefault();
                                     setMapTreeContextMenu({ x: e.clientX, y: e.clientY, map });
                                   }}
-                                  className={`flex items-center gap-2 w-full px-2 py-1.5 rounded text-left transition-colors focus:outline-none ${
+                                  title={twin ? `${t.sidebar.sameAsAppMap}: ${twin.name || ''}` : undefined}
+                                  className={`flex items-center gap-2 w-full px-2 py-1.5 rounded text-left transition-colors focus:outline-none ${twin ? 'opacity-60' : ''} ${
                                     isOpen
                                       // Clair + modifiée : fond rouge plus léger sous le texte rouge
                                       ? (theme === 'light' && isModified ? "bg-primary/10" : "bg-primary/20")
@@ -6737,6 +6887,9 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                                         <span className={isModified ? modifiedGradient : ''} style={isModified ? undefined : { color: textColorStrong }}>{map.name || `Map ${index + 1}`}</span>
                                         {edcsuiteCodeblockId !== null && (
                                           <span className={`ml-1 ${isModified ? modifiedGradient : ''}`} style={isModified ? undefined : { color: textColorMuted }}>[codeblock {edcsuiteCodeblockId}]</span>
+                                        )}
+                                        {twin && (
+                                          <span className="ml-1" style={{ color: textColorMuted }}>= {t.sidebar.mappack}</span>
                                         )}
                                       </>
                                     ) : (
@@ -7768,7 +7921,7 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                     const dimForMinWidth = (map as any)?.dimensions?.TwoDimensional;
 
                     // Détecter si c'est une map EGR (axes inversés à l'affichage)
-                    const mapNameLowerForMinWidth = (map.name || '').toLowerCase();
+                    const mapNameLowerForMinWidth = map.external_source ? '' : (map.name || '').toLowerCase();
                     const isEgrMapForMinWidth = mapNameLowerForMinWidth.includes("egr") &&
                       !mapNameLowerForMinWidth.includes("temperature") &&
                       !mapNameLowerForMinWidth.includes("temp");
@@ -8294,10 +8447,17 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
 
               const patches = impl.applyBinaryPatches(currentData);
               if (patches.length === 0) {
+                // Zéro patch a deux causes opposées : la zone n'existe pas
+                // dans ce fichier, ou la solution y est déjà écrite et a
+                // effacé sa propre signature. Annoncer des maps
+                // introuvables dans le second cas était trompeur.
+                const already = impl.isApplied?.(currentData) === true;
                 toast({
-                  title: t.errors.noMapsFound,
-                  description: impl.name,
-                  variant: "destructive",
+                  title: already ? t.errors.solutionAlreadyApplied : t.errors.noMapsFound,
+                  description: already
+                    ? t.errors.solutionAlreadyAppliedDescription.replace("{name}", impl.name)
+                    : impl.name,
+                  variant: already ? undefined : "destructive",
                 });
                 continue;
               }
@@ -8336,6 +8496,12 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
                     unit: info.unit,
                     description: info.description,
                     y_axis_inverted: info.y_axis_inverted,
+                    // Le detecteur ne produit pas cette map : c'est la
+                    // solution qui la fabrique. Sans cette marque, la
+                    // re-detection la balayait avec le reste de la liste
+                    // et le launch control disparaissait du projet
+                    // (issues #40 et #41).
+                    created_by_solution: solutionId,
                   });
                 }
               }
@@ -8678,6 +8844,11 @@ await axios.put("/api/versioning/map-edits", { versionId: currentVersionId, edit
           isClosing={isMappackExportModalClosing}
           isExporting={isExportingMappack}
           exportComplete={isMappackExportComplete}
+          description={
+            mappackExportSource === "detector"
+              ? undefined
+              : t.mappackExport.descriptionImported.replace("{source}", mappackExportSource)
+          }
         />
       )}
 

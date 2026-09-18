@@ -13,6 +13,9 @@ interface MappackExportModalProps {
   isClosing?: boolean;
   isExporting?: boolean;
   exportComplete?: boolean;
+  /** Texte sous le titre ; par défaut celui du mappack de l'app. Une
+   *  racine importée (OLS, XDF, JSON) passe le sien. */
+  description?: string;
 }
 
 export function MappackExportModal({
@@ -22,6 +25,7 @@ export function MappackExportModal({
   isClosing = false,
   isExporting = false,
   exportComplete = false,
+  description,
 }: MappackExportModalProps) {
   const { t } = useI18n();
   // Suit le thème de l'écran hôte (dashboard ou éditeur)
@@ -91,7 +95,7 @@ export function MappackExportModal({
             {!isExporting && !exportComplete && (
               <div className="mt-4 text-center space-y-1">
                 <p className="text-sm" style={{ color: L ? 'rgba(0, 0, 0, 0.55)' : 'rgba(255, 255, 255, 0.6)' }}>
-                  {t.mappackExport.description}
+                  {description ?? t.mappackExport.description}
                 </p>
                 {/* Local app: export is free and unlimited — the cost line only
                     shows when a cost is actually configured (never by default) */}
